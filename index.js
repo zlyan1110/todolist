@@ -22,25 +22,50 @@
         console.log(data);
     }); */
 
+function myFetch(url, options = {}) {
+  return new Promise((res, rej) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(options.method || "GET", url);
+    xhr.responseType = "json";
+    for (let headerName in options.headers) {
+      xhr.setRequestHeader(headerName, options.headers[headerName]);
+    }
+    xhr.onload = () => {
+      res(xhr.response);
+    };
+    xhr.onerror = () => {
+      rej(new Error("fetch failed"));
+    };
+    xhr.send(options.body);
+  });
+}
 const APIs = (() => {
     const createTodo = (newTodo) => {
-        return fetch("http://localhost:3000/todos", {
+        return myFetch("http://localhost:3000/todos", {
             method: "POST",
             body: JSON.stringify(newTodo),
             headers: { "Content-Type": "application/json" },
-        }).then((res) => res.json());
+        });
     };
 
     const deleteTodo = (id) => {
-        return fetch("http://localhost:3000/todos/" + id, {
+        return myFetch("http://localhost:3000/todos/" + id, {
             method: "DELETE",
-        }).then((res) => res.json());
+        });
     };
 
+    const updateTodo = (id, newTodo) => {
+        return myFetch("http://localhost:3000/todos/" + id, {
+          method: "PATCH",
+          body: JSON.stringify(newTodo),
+          headers: { "Content-Type": "application/json" },
+        });
+      };
+
     const getTodos = () => {
-        return fetch("http://localhost:3000/todos").then((res) => res.json());
+        return myFetch("http://localhost:3000/todos");
     };
-    return { createTodo, deleteTodo, getTodos };
+    return { createTodo, deleteTodo, updateTodo, getTodos };
 })();
 
 //IIFE
@@ -73,12 +98,13 @@ const Model = (() => {
             this.#onChange = callback;
         }
     }
-    const { getTodos, createTodo, deleteTodo } = APIs;
+    const { getTodos, createTodo, deleteTodo, updateTodo } = APIs;
     return {
-        State,
-        getTodos,
-        createTodo,
-        deleteTodo,
+      State,
+      getTodos,
+      createTodo,
+      deleteTodo,
+      updateTodo,
     };
 })();
 /* 
@@ -95,27 +121,47 @@ const Model = (() => {
 
 */
 const View = (() => {
-    const todolistEl = document.querySelector(".todo-list");
+    const todolistEl = document.querySelector(".todo-list--pending");
+    const todolistcompletedEl = document.querySelector(".todo-list--completed");
     const submitBtnEl = document.querySelector(".submit-btn");
     const inputEl = document.querySelector(".input");
 
+
     const renderTodos = (todos) => {
         let todosTemplate = "";
-        todos.forEach((todo) => {
-            const liTemplate = `<li><span>${todo.content}</span><button class="delete-btn" id="${todo.id}">delete</button></li>`;
+        let todoscompleteTemplate = "";
+
+        const todospending = todos.filter((todo) => {
+            return !todo.complete;
+        });
+        const todoscompleted = todos.filter((todo) => {
+            return todo.complete;
+        });
+
+        todospending.forEach((todo) => {
+            const liTemplate = `<li><span>${todo.content}</span><button class="edit-btn" id="edit-btn/${todo.id}">edit</button><button class="delete-btn" id="${todo.id}">delete</button><button class="move-btn" id="move-btn/${todo.id}">move</button></li>`;
             todosTemplate += liTemplate;
         });
-        if (todos.length === 0) {
-            todosTemplate = "<h4>no task to display!</h4>";
+        todoscompleted.forEach((todo) => {
+            const liTemplate = `<li><span>${todo.content}</span><button class="edit-btn" id="edit-btn/${todo.id}">edit</button><button class="delete-btn" id="${todo.id}">delete</button><button class="move-btn" id="move-btn/${todo.id}">move</button></li>`;
+            todoscompleteTemplate += liTemplate;
+        });
+        
+        if (todospending.length === 0) {
+            todosTemplate = "<h4>no pending task!</h4>";
+        }
+        if (todoscompleted.length === 0) {
+            todoscompleteTemplate = "<h4>no completed task!</h4>";
         }
         todolistEl.innerHTML = todosTemplate;
+        todolistcompletedEl.innerHTML = todoscompleteTemplate;
     };
 
     const clearInput = () => {
         inputEl.value = "";
     };
 
-    return { renderTodos, submitBtnEl, inputEl, clearInput, todolistEl };
+    return { renderTodos, submitBtnEl, inputEl, clearInput, todolistEl, todolistcompletedEl };
 })();
 
 const Controller = ((view, model) => {
@@ -135,12 +181,75 @@ const Controller = ((view, model) => {
                 3. update view
             */
             const inputValue = view.inputEl.value;
-            model.createTodo({ content: inputValue }).then((data) => {
+            model.createTodo({ content: inputValue, complete: false }).then((data) => {
                 state.todos = [data, ...state.todos];
                 view.clearInput();
             });
         });
     };
+
+    const handleMove = () => {
+        view.todolistEl.addEventListener("click", (event) => {
+            if (event.target.className === "move-btn") {
+              const id = event.target.id.split("/")[1];
+              model.updateTodo(+id, { complete: true }).then(() => {
+                state.todos.forEach((todo) => {
+                  if (+todo.id === +id) {
+                    todo.complete = true;
+                  }
+                });
+                state.todos = [...state.todos];
+              });
+            }
+          });
+        view.todolistcompletedEl.addEventListener("click", (event) => {
+            if (event.target.className === "move-btn") {
+              const id = event.target.id.split("/")[1];
+              model.updateTodo(+id, { complete: false }).then(() => {
+                state.todos.forEach((todo) => {
+                  if (+todo.id === +id) {
+                    todo.complete = false;
+                  }
+                });
+                state.todos = [...state.todos];
+              });
+            }
+          });
+
+    }
+
+    const handleEdit = () => {
+        view.todolistEl.addEventListener("click", (event) => {
+          if (event.target.className === "edit-btn") {
+            const id = event.target.id.split("/")[1];
+            const spanEl = event.target.parentElement.firstChild;
+            if (spanEl.contentEditable === "true") {
+              model.updateTodo(+id, { content: spanEl.innerHTML }).then(() => {
+                spanEl.contentEditable = "false";
+                spanEl.style.backgroundColor = "#e6e2d3";
+              });
+            } else {
+              spanEl.contentEditable = "true";
+              spanEl.style.backgroundColor = "white";
+            }
+          }
+        });
+        view.todolistcompletedEl.addEventListener("click", (event) => {
+          if (event.target.className === "edit-btn") {
+            const id = event.target.id.split("/")[1];
+            const spanEl = event.target.parentElement.firstChild;
+            if (spanEl.contentEditable === "true") {
+              model.updateTodo(+id, { content: spanEl.innerHTML }).then(() => {
+                spanEl.contentEditable = "false";
+                spanEl.style.backgroundColor = "#e6e2d3";
+              });
+            } else {
+              spanEl.contentEditable = "true";
+              spanEl.style.backgroundColor = "white";
+            }
+          }
+        });
+      };
 
     const handleDelete = () => {
         //event bubbling
@@ -158,12 +267,24 @@ const Controller = ((view, model) => {
                 });
             }
         });
+
+        view.todolistcompletedEl.addEventListener("click", (event) => {
+            if (event.target.className === "delete-btn") {
+                const id = event.target.id;
+                console.log("id", typeof id);
+                model.deleteTodo(+id).then((data) => {
+                    state.todos = state.todos.filter((todo) => todo.id !== +id);
+                });
+            }
+        });
     };
 
     const bootstrap = () => {
         init();
         handleSubmit();
         handleDelete();
+        handleMove();
+        handleEdit();
         state.subscribe(() => {
             view.renderTodos(state.todos);
         });
